@@ -48,17 +48,10 @@ attention, unfreezing the whole backbone, and widening a blend with more arms.
 
 ## Pipeline
 
-```mermaid
-flowchart LR
-    A["Raw DICOM<br/>570 GB"] --> B["Pixel cache<br/>sorted slices, uint8"]
-    R["Radiology reports"] --> L["Soft labels<br/>LLM reads"]
-    B --> T["2.5D training<br/>CoAtNet-2 / ConvNeXt"]
-    L --> T
-    T --> W["Weights<br/>5 seeds, full data"]
-    W --> S["Offline kernel<br/>rank blend per label"]
-    S --> G{"Recompute gate<br/>exact match?"}
-    G -->|yes| K["submission.csv"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-dark.png">
+  <img alt="Pipeline: DICOM to pixel cache and reports to soft labels, both into 2.5D training, then weights, offline kernel, recompute gate, submission.csv" src="assets/pipeline-light.png">
+</picture>
 
 1. **Pixel cache** (`notebooks/cache/`): CPU Kaggle kernels turn 570 GB of DICOM into a
    uint8 cache. DICOM slice order is random, so slices are sorted by
