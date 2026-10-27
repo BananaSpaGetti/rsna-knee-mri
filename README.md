@@ -12,6 +12,11 @@ Write-up with all 68 scored submissions, public vs private:
 
 ## Results
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/private-auc-dark.png">
+  <img alt="Private AUC per entry: O1 0.903, O7 0.907, team final 0.942, L2 0.944, L1 0.946" src="assets/private-auc-light.png">
+</picture>
+
 | Entry | What it is | Public | Private |
 |---|---|---|---|
 | Baseline (08-30) | DINOv2-S 2.5D @224, 3 folds, one LLM label set | 0.835 | - |
@@ -43,6 +48,18 @@ attention, unfreezing the whole backbone, and widening a blend with more arms.
 
 ## Pipeline
 
+```mermaid
+flowchart LR
+    A["Raw DICOM<br/>570 GB"] --> B["Pixel cache<br/>sorted slices, uint8"]
+    R["Radiology reports"] --> L["Soft labels<br/>LLM reads"]
+    B --> T["2.5D training<br/>CoAtNet-2 / ConvNeXt"]
+    L --> T
+    T --> W["Weights<br/>5 seeds, full data"]
+    W --> S["Offline kernel<br/>rank blend per label"]
+    S --> G{"Recompute gate<br/>exact match?"}
+    G -->|yes| K["submission.csv"]
+```
+
 1. **Pixel cache** (`notebooks/cache/`): CPU Kaggle kernels turn 570 GB of DICOM into a
    uint8 cache. DICOM slice order is random, so slices are sorted by
    `ImagePositionPatient` projected on the `ImageOrientationPatient` normal. Recipe v5
@@ -72,7 +89,8 @@ notebooks/infer/     single-family inference kernel
 notebooks/fusion/    multi-arm fusion kernel
 notebooks/o1/        builder, recompute gate and tests for own-arm submissions
 notebooks/writeup/   builds the readable notebook edition
-tools/               staging helper for local training
+tools/               staging helper for local training, README chart (plot_results.py)
+assets/              README images
 docs/                EDA, methodology, label audit, pseudo-label notes, research notes, specs
 ```
 
