@@ -1,0 +1,27 @@
+{
+  "id": "patimakornsrinamen/rsna-67knee-fusion",
+  "title": "rsna-67knee-fusion",
+  "code_file": "fusion_submit.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "machine_shape": "NvidiaTeslaT4",
+  "enable_internet": "false",
+  "dataset_sources": [
+    "dreaddevelopment/raptor-knee-maxspan",
+    "mattiaangeli/rsna-knee-coat-resgated-ep10-top3",
+    "mattiaangeli/opencv-python-headless-4120088-x86",
+    "patimakornsrinamen/rsna-knee-src",
+    "patimakornsrinamen/rsna-67knee-weights-v4b",
+    "patimakornsrinamen/rsna-67knee-weights-v6c",
+    "patimakornsrinamen/rsna-67knee-weights-pseudo-v1",
+    "patimakornsrinamen/rsna-67knee-weights-convnexts",
+    "patimakornsrinamen/rsna-67knee-weights-rs",
+    "patimakornsrinamen/rsna-67knee-weights-rs2",
+    "patimakornsrinamen/rsna-67knee-weights-t4",
+    "patimakornsrinamen/rsna-67knee-weights-t5"
+  ],
+  "competition_sources": ["rsna-knee-abnormality-detection"],
+  "kernel_sources": []
+}

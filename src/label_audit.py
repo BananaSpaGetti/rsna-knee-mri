@@ -1,0 +1,302 @@
+"""Label audit: where is the ceiling - the teacher labels or the model?
+
+Per finding, on the 58 radiologist-labelled gold studies, compares
+  * the teacher (consensus_v1) and each raw LLM reader against gold,
+  * every trained arm's fold ensemble against gold (from gold_windows*.npz),
+and, over the 4,349 training studies, each arm's out-of-fold AUC against the
+teacher and the reader disagreement per finding. A finding whose teacher AUC
+is low and whose model gold AUC sits at or below it is teacher-limited: better
+labels are the lever. A finding whose teacher is strong but the model is weak
+is model-limited: architecture or data are the lever. Gold-58 has very few
+positives for some findings; the n_pos column says how much to trust a row.
+
+Usage (from rsna-67knee/):
+    py src/label_audit.py --run v6c=C:/kaggle/staging/weights-v6c \\
+        --run v4b=C:/kaggle/staging/weights-v4b \\
+        --run v5-f012=C:/kaggle/staging/weights-v5-f012 --out docs/label-audit.md
+"""
+import argparse
+import glob
+import json
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+try:
+    from sklearn.metrics import roc_auc_score
+except ImportError:  # sklearn's compiled extension blocked (Smart App Control) or not installed
+    from auc import roc_auc_score
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+from preprocess import LABELS  # noqa: E402
+from make_labels import READERS, load_reader  # noqa: E402
+
+DATA = os.path.join(ROOT, "data")
+
+
+def auc_or_nan(t, s):
+    """AUC over the rows where the score is finite (a reader may lack a study);
+    NaN when the target has a single class."""
+    s = np.asarray(s, dtype=float)
+    ok = np.isfinite(s)
+    t = (np.asarray(t)[ok] >= 0.5).astype(int)
+    if t.size == 0 or t.min() == t.max():
+        return float("nan")
+    return roc_auc_score(t, s[ok])
+
+
+def load_gold():
+    g = pd.read_csv(os.path.join(DATA, "gold58.csv")).set_index("StudyInstanceUID")[LABELS]
+    return g
+
+
+def load_consensus():
+    c = pd.read_csv(os.path.join(DATA, "labels-consensus", "consensus_v1.csv"))
+    return c.set_index("StudyInstanceUID")
+
+
+def load_run_gold(run_dir, gold_uids):
+    """Mean over every fold found in gold_windows*.npz -> (58, 12) study probs,
+    plus the per-fold matrix (n_folds, 58, 12)."""
+    mats = []
+    for p in sorted(glob.glob(os.path.join(run_dir, "gold_windows*.npz"))):
+        z = np.load(p, allow_pickle=True)
+        uids = list(z["uids"])
+        order = [uids.index(u) for u in gold_uids]
+        sp = z["study_probs"][order]  # (58, n_fold_in_file, 12)
+        for k in range(sp.shape[1]):
+            mats.append(sp[:, k, :])
+    if not mats:
+        raise SystemExit(f"no gold_windows*.npz in {run_dir}")
+    folds = np.stack(mats)  # (n_folds, 58, 12)
+    return folds.mean(axis=0), folds
+
+
+def load_run_oof(run_dir, consensus):
+    cfg = json.load(open(os.path.join(run_dir, "run_config.json")))
+    fold_of = json.load(open(os.path.join(run_dir, "fold_of.json")))
+    uids = list(fold_of)
+    oof = np.load(os.path.join(run_dir, "oof.npy"))
+    # older run_configs (v4b) carry no folds_trained: every split fold was trained
+    trained = set(cfg.get("folds_trained") or range(int(cfg.get("split_folds", cfg.get("n_folds", 5)))))
+    mask = np.array([fold_of[u] in trained for u in uids]) & np.isfinite(oof).all(axis=1)
+    if cfg.get("smoke"):
+        mask &= (oof != 0).any(axis=1)
+    y = consensus.reindex(uids)[LABELS].to_numpy(dtype=float)
+    return y[mask], oof[mask], int(mask.sum()), sorted(trained)
+
+
+def fmt(x, nd=3):
+    return "—" if (x is None or (isinstance(x, float) and np.isnan(x))) else f"{x:.{nd}f}"
+
+
+def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")  # the report uses en dashes and arrows
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--run", action="append", default=[], metavar="NAME=DIR",
+                    help="a merged weights dir (gold_windows*.npz, oof.npy, fold_of.json, run_config.json)")
+    ap.add_argument("--out", default=None, help="write the markdown report here (default: stdout only)")
+    args = ap.parse_args()
+    runs = [tuple(r.split("=", 1)) for r in args.run]
+
+    gold = load_gold()
+    gold_uids = list(gold.index)
+    cons = load_consensus()
+    train_ids = pd.Index(pd.read_csv(os.path.join(DATA, "train.csv"))["StudyInstanceUID"])
+    readers = {name: load_reader(name, path, train_ids) for name, path in READERS}
+    cube = np.stack([readers[n].to_numpy(dtype=float) for n, _ in READERS])  # (3, N, 12)
+
+    gy = gold.to_numpy(dtype=float)
+    cons_gold = cons.reindex(gold_uids)[LABELS].to_numpy(dtype=float)
+    reader_gold = {n: readers[n].reindex(gold_uids).to_numpy(dtype=float) for n in readers}
+    train_mask = ~train_ids.isin(gold_uids)
+
+    lines = []
+    P = lines.append
+    P("# Label audit — teacher-limited or model-limited?")
+    P("")
+    P("Generated by `src/label_audit.py`. Gold = 58 radiologist-labelled studies, never trained on. "
+      "Teacher = `consensus_v1.csv` (mean of three LLM readers over the reports). "
+      "AUC needs both classes: rows with tiny `n_pos` are noise, not evidence.")
+    P("")
+
+    # ---- Table 1: teacher and readers vs gold
+    P("## 1. Teacher quality on gold-58 (AUC vs radiologist)")
+    P("")
+    hdr = ["finding", "n_pos", "consensus"] + [n for n, _ in READERS] + ["best reader", "cons−gold flips"]
+    P("| " + " | ".join(hdr) + " |")
+    P("|" + "---|" * len(hdr))
+    teacher_auc = {}
+    for c, lab in enumerate(LABELS):
+        n_pos = int((gy[:, c] >= 0.5).sum())
+        a_c = auc_or_nan(gy[:, c], cons_gold[:, c])
+        a_r = {n: auc_or_nan(gy[:, c], reader_gold[n][:, c]) for n in readers}
+        best = max(a_r.values()) if not all(np.isnan(list(a_r.values()))) else float("nan")
+        flips = int(((cons_gold[:, c] >= 0.5) != (gy[:, c] >= 0.5)).sum())
+        teacher_auc[lab] = a_c
+        P(f"| {lab} | {n_pos} | {fmt(a_c)} | " + " | ".join(fmt(a_r[n]) for n, _ in READERS)
+          + f" | {fmt(best)} | {flips}/58 |")
+    macro_c = np.nanmean([teacher_auc[l] for l in LABELS])
+    P(f"| **macro** | | **{macro_c:.4f}** | "
+      + " | ".join(fmt(np.nanmean([auc_or_nan(gy[:, c], reader_gold[n][:, c]) for c in range(12)])) for n, _ in READERS)
+      + " | | |")
+    P("")
+    P("`cons−gold flips` = studies where the teacher's ≥0.5 call disagrees with the radiologist.")
+    P("")
+
+    # ---- Table 2: reader disagreement + prevalence on the training set
+    P("## 2. Reader disagreement and prevalence (4,349 training studies)")
+    P("")
+    P("| finding | consensus pos-rate | gold pos-rate | mean |reader − mean| | studies with reader split (max−min ≥ 0.5) |")
+    P("|---|---|---|---|---|")
+    for c, lab in enumerate(LABELS):
+        col = cube[:, train_mask, c]
+        mean = np.nanmean(col, axis=0)
+        dis = np.nanmean(np.abs(col - mean), axis=0)
+        split = int((np.nanmax(col, axis=0) - np.nanmin(col, axis=0) >= 0.5).sum())
+        P(f"| {lab} | {np.nanmean(mean >= 0.5):.3f} | {np.mean(gy[:, c] >= 0.5):.3f} | "
+          f"{np.nanmean(dis):.3f} | {split} ({split / col.shape[1]:.1%}) |")
+    P("")
+
+    # ---- Table 3: models vs gold and vs teacher
+    if runs:
+        P("## 3. Arms: gold-58 AUC (fold ensemble) and OOF AUC vs teacher")
+        P("")
+        run_gold, run_oof = {}, {}
+        for name, d in runs:
+            ens, folds = load_run_gold(d, gold_uids)
+            run_gold[name] = (ens, folds)
+            try:
+                run_oof[name] = load_run_oof(d, cons)
+            except FileNotFoundError:
+                run_oof[name] = None
+        hdr = ["finding", "n_pos", "teacher→gold"]
+        for name, _ in runs:
+            hdr += [f"{name} gold", f"{name} fold-spread", f"{name} OOF"]
+        P("| " + " | ".join(hdr) + " |")
+        P("|" + "---|" * len(hdr))
+        macro = {name: [] for name, _ in runs}
+        macro_oof = {name: [] for name, _ in runs}
+        for c, lab in enumerate(LABELS):
+            n_pos = int((gy[:, c] >= 0.5).sum())
+            row = [lab, str(n_pos), fmt(teacher_auc[lab])]
+            for name, _ in runs:
+                ens, folds = run_gold[name]
+                a = auc_or_nan(gy[:, c], ens[:, c])
+                per_fold = [auc_or_nan(gy[:, c], f[:, c]) for f in folds]
+                spread = (f"{np.nanmin(per_fold):.2f}–{np.nanmax(per_fold):.2f}"
+                          if not all(np.isnan(per_fold)) else "—")
+                macro[name].append(a)
+                if run_oof[name] is not None:
+                    y, o, n, tr = run_oof[name]
+                    ao = auc_or_nan(y[:, c], o[:, c])
+                    macro_oof[name].append(ao)
+                else:
+                    ao = float("nan")
+                row += [fmt(a), spread, fmt(ao)]
+            P("| " + " | ".join(row) + " |")
+        row = ["**macro**", "", f"**{macro_c:.4f}**"]
+        for name, _ in runs:
+            row += [f"**{np.nanmean(macro[name]):.4f}**", "",
+                    f"**{np.nanmean(macro_oof[name]):.4f}**" if macro_oof[name] else "—"]
+        P("| " + " | ".join(row) + " |")
+        P("")
+        for name, _ in runs:
+            if run_oof[name] is not None:
+                y, o, n, tr = run_oof[name]
+                P(f"- `{name}`: OOF over {n} studies, folds {tr}; gold ensemble = mean of "
+                  f"{run_gold[name][1].shape[0]} fold(s).")
+        P("")
+
+        # ---- Table 4: verdict per finding using the first run as the reference arm
+        ref, _ = runs[0]
+        P(f"## 4. Verdict per finding (reference arm `{ref}`)")
+        P("")
+        P("| finding | teacher→gold | model→gold | model→teacher (OOF) | reading |")
+        P("|---|---|---|---|---|")
+        ens, _ = run_gold[ref]
+        y, o, _, _ = run_oof[ref]
+        for c, lab in enumerate(LABELS):
+            t = teacher_auc[lab]
+            m = auc_or_nan(gy[:, c], ens[:, c])
+            oo = auc_or_nan(y[:, c], o[:, c])
+            n_pos = int((gy[:, c] >= 0.5).sum())
+            if n_pos < 5 or (58 - n_pos) < 5:
+                verdict = "too few gold cases to read"
+            elif np.isnan(t) or np.isnan(m):
+                verdict = "—"
+            elif oo >= m + 0.05 and t < 0.9:
+                verdict = ("teacher-limited: the model reproduces the teacher (OOF high) but the "
+                           "teacher disagrees with the radiologist — relabel")
+            elif m < t - 0.05 and oo < t - 0.05:
+                verdict = "model-limited: the model has not even caught up with the teacher — modelling"
+            elif m >= t:
+                verdict = "model beats the teacher on gold: labels are noisy but the image signal is learnt"
+            else:
+                verdict = "balanced: model tracks the teacher"
+            P(f"| {lab} | {fmt(t)} | {fmt(m)} | {fmt(oo)} | {verdict} |")
+        P("")
+
+    # ---- Table 6 (before 5): cross-label proxies on gold-58
+    P("## 6. Cross-label proxies on gold-58: does another column predict the radiologist better?")
+    P("")
+    P("AUC of each gold finding (row) against every teacher column (and, for the reference arm, "
+      "every model column). Diagonal = the finding's own label. An off-diagonal cell above the "
+      "diagonal means the reports describe that finding under a different name, or the readers "
+      "under-call it. Anything acted on here is a gold-58 selection and needs a leaderboard check.")
+    P("")
+    short = [l.replace("Medial ", "M.").replace("Lateral ", "L.") for l in LABELS]
+    P("| gold ↓ / teacher → | " + " | ".join(short) + " | best off-diag |")
+    P("|" + "---|" * (len(LABELS) + 2))
+    for i, lab in enumerate(LABELS):
+        row = [auc_or_nan(gy[:, i], cons_gold[:, j]) for j in range(12)]
+        best_j = int(np.nanargmax([r if j != i else -1 for j, r in enumerate(row)]))
+        cells = [(f"**{fmt(r, 2)}**" if j == i else fmt(r, 2)) for j, r in enumerate(row)]
+        P(f"| {short[i]} | " + " | ".join(cells)
+          + f" | {short[best_j]} {fmt(row[best_j], 2)} vs own {fmt(row[i], 2)} |")
+    P("")
+    if runs:
+        ref, _ = runs[0]
+        ens, _ = run_gold[ref]
+        P(f"Same matrix against the `{ref}` fold-ensemble columns:")
+        P("")
+        P("| gold ↓ / model → | " + " | ".join(short) + " | best off-diag |")
+        P("|" + "---|" * (len(LABELS) + 2))
+        for i, lab in enumerate(LABELS):
+            row = [auc_or_nan(gy[:, i], ens[:, j]) for j in range(12)]
+            best_j = int(np.nanargmax([r if j != i else -1 for j, r in enumerate(row)]))
+            cells = [(f"**{fmt(r, 2)}**" if j == i else fmt(r, 2)) for j, r in enumerate(row)]
+            P(f"| {short[i]} | " + " | ".join(cells)
+              + f" | {short[best_j]} {fmt(row[best_j], 2)} vs own {fmt(row[i], 2)} |")
+        P("")
+
+    # ---- Table 5: the gold-58 disagreements worth a human look
+    P("## 5. Gold-58 studies where the teacher flips the radiologist's call")
+    P("")
+    P("Per finding, the studies where consensus ≥ 0.5 ≠ gold ≥ 0.5, with each reader's value — "
+      "a reader that agrees with the radiologist while the consensus does not is a weighting fix; "
+      "all three wrong means the report itself misleads (a label the image has to carry alone).")
+    P("")
+    P("| finding | study (uid tail) | gold | consensus | " + " | ".join(n for n, _ in READERS) + " |")
+    P("|" + "---|" * (4 + len(READERS)))
+    for c, lab in enumerate(LABELS):
+        for i, u in enumerate(gold_uids):
+            if (cons_gold[i, c] >= 0.5) != (gy[i, c] >= 0.5):
+                P(f"| {lab} | …{u[-8:]} | {int(gy[i, c])} | {cons_gold[i, c]:.2f} | "
+                  + " | ".join(fmt(reader_gold[n][i, c], 2) for n, _ in READERS) + " |")
+    P("")
+
+    text = "\n".join(lines) + "\n"
+    print(text)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        print(f"wrote {args.out}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

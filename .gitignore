@@ -1,0 +1,8 @@
+data/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# local secrets
+*.env
+kaggle.json

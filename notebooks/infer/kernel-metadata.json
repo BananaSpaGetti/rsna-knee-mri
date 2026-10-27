@@ -1,0 +1,18 @@
+{
+  "id": "patimakornsrinamen/rsna-67knee-infer-submit",
+  "title": "rsna-67knee-infer-submit",
+  "code_file": "infer_submit.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "machine_shape": "NvidiaTeslaT4",
+  "enable_internet": "false",
+  "dataset_sources": [
+    "patimakornsrinamen/rsna-knee-src",
+    "patimakornsrinamen/rsna-67knee-weights-v4b",
+    "patimakornsrinamen/rsna-67knee-weights-v6c"
+  ],
+  "competition_sources": ["rsna-knee-abnormality-detection"],
+  "kernel_sources": []
+}

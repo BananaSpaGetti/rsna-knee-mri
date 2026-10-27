@@ -1,0 +1,21 @@
+{
+  "id": "patimakornsrinamen/rsna-67knee-train-dinov2s",
+  "title": "rsna-67knee-train-dinov2s",
+  "code_file": "train_dinov2.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "machine_shape": "NvidiaTeslaT4",
+  "enable_internet": "true",
+  "dataset_sources": [
+    "patimakornsrinamen/rsna-knee-src",
+    "patimakornsrinamen/rsna-knee-consensus-labels",
+    "stevenleehans/rsna-knee-llm-report-labels"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "patimakornsrinamen/rsna-knee-build-cache",
+    "patimakornsrinamen/rsna-knee-build-cache-b"
+  ]
+}
