@@ -14,7 +14,7 @@ Write-up with all 68 scored submissions, public vs private:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/private-auc-dark.png">
-  <img alt="Private AUC per entry: O1 0.903, O7 0.907, team final 0.942, L2 0.944, L1 0.946" src="assets/private-auc-light.png">
+  <img alt="Private AUC per entry: O1 0.903, O7 0.907, team final 0.942, L3 0.943, L2 0.944, L1 0.946" src="assets/private-auc-light.png">
 </picture>
 
 | Entry | What it is | Public | Private |
@@ -27,7 +27,7 @@ Write-up with all 68 scored submissions, public vs private:
 | Team final (10-22) | team Knee_Okay's selected entry (public-notebook blend) | 0.958 | 0.942 (rank 917 / 6,425) |
 | **L1** (late, 10-27) | one own CoAtNet-2 arm, 5 seeds, on the 7th-place team's public labels | 0.956 | **0.946** |
 | L2 (late, 10-27) | L1 + horizontal-flip TTA | 0.955 | 0.944 |
-| L3 (late) | L1 + a ConvNeXt-Small arm on the same labels, no TTA | pending | pending |
+| L3 (late, 10-28) | L1 + a ConvNeXt-Small arm on the same labels, rank blend, no TTA | 0.954 | 0.943 |
 
 Late submissions are scored but never enter the leaderboard; 0.946 private would have
 placed about 124-161.
@@ -44,7 +44,8 @@ What moved the score, in order of size:
 
 Things that did not help when measured: bigger encoders, a stronger LLM teacher,
 per-label pooling tuned on the 58 gold studies (it overfits them), per-label spatial
-attention, unfreezing the whole backbone, and widening a blend with more arms.
+attention, unfreezing the whole backbone, widening a blend with more arms, horizontal-flip
+TTA (L2, -0.002) and a second architecture on the same labels (L3, -0.003).
 
 ## Pipeline
 

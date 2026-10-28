@@ -5,11 +5,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 OUT = sys.argv[1]
-# (label, private AUC, highlight) -- sources: Kaggle submissions API, read 2026-10-23 / 10-27
+# (label, private AUC, highlight) -- sources: Kaggle submissions API, read 2026-10-23 / 10-27 / 10-28
 ROWS = [
     ("O1  own CoAtNet-2, 5-fold", 0.903, False),
     ("O7  own, refit on full data", 0.907, False),
     ("Team final  public-notebook blend", 0.942, False),
+    ("L3  L1 + ConvNeXt-Small arm", 0.943, False),
     ("L2  L1 + flip TTA", 0.944, False),
     ("L1  own model, better labels", 0.946, True),
 ]
@@ -19,7 +20,7 @@ THEMES = {
 }
 
 for mode, t in THEMES.items():
-    fig, ax = plt.subplots(figsize=(8, 3.6), dpi=200)
+    fig, ax = plt.subplots(figsize=(8, 4.0), dpi=200)
     fig.patch.set_facecolor(t["bg"]); ax.set_facecolor(t["bg"])
     y = list(range(len(ROWS)))
     for yi, (lab, v, hi) in zip(y, ROWS):
@@ -38,7 +39,7 @@ for mode, t in THEMES.items():
     ax.set_xlabel("Private leaderboard macro AUC", color=t["ink2"], fontsize=9)
     fig.suptitle("Better labels moved the score more than any model change",
                  x=0.02, ha="left", fontsize=12.5, fontweight="bold", color=t["ink"])
-    fig.text(0.02, 0.015, "RSNA Knee Abnormality Detection, Kaggle 2026. L1/L2 are late submissions (scored, not ranked).",
+    fig.text(0.02, 0.015, "RSNA Knee Abnormality Detection, Kaggle 2026. L1-L3 are late submissions (scored, not ranked).",
              fontsize=7.5, color=t["ink2"])
     fig.tight_layout(rect=(0, 0.04, 1, 0.95))
     fig.savefig(f"{OUT}/private-auc-{mode}.png", facecolor=t["bg"])
